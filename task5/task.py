@@ -1,136 +1,82 @@
-import json
-
 import numpy as np
 
-
-def get_clusters_from_str(str_json):
-    str_json = str(str_json[1:-1])
-    str_split = str_json.split(",")
-    clusters = []
-    cluster_read = False
-    for substr in str_split:
-        current_cluster = cluster_read
-        if '[' in substr:
-            substr = substr[1:]
-            cluster_read = True
-        if ']' in substr:
-            substr = substr[:-1]
-            cluster_read = False
-
-        if not current_cluster:
-            clusters.append([int(substr)])
+def expand_list(ranks):
+    expanded_ranks = []
+    for element in ranks:
+        if isinstance(element, int):
+            expanded_ranks.append(element)
         else:
-            clusters[-1].append(int(substr))
-    return clusters
+            expanded_ranks.extend(element)
+    return sorted(expanded_ranks)
 
+def construct_matrix(rank_list):
+    expanded_list = expand_list(rank_list)
+    rank_matrix = np.zeros(shape=(len(expanded_list), len(expanded_list)), dtype=int)
+    for i, val_i in enumerate(expanded_list):
+        for j, val_j in enumerate(expanded_list):
+            if val_i == val_j or not is_inferior(rank_list, val_i, val_j):
+                rank_matrix[i, j] = 1
+    return rank_matrix
 
-def get_matrix_from_expert(str_json: str):
-    matrix = []
-    n = 0
-
-    clusters = get_clusters_from_str(str_json)
-    # clusters = json.loads(str_json)["str"]
-    for cluster in clusters:
-        n += len(cluster)
-    for i in range(n):
-        matrix.append([1] * n)
-
-    worse = []
-    for cluster in clusters:
-        for worse_elem in worse:
-            for elem in cluster:
-                matrix[elem - 1][worse_elem - 1] = 0
-        for elem in cluster:
-            worse.append(int(elem))
-
-    return np.array(matrix)
-
-
-def get_AND_matrix(matrix1, matrix2):
-    rows = len(matrix1)
-    cols = len(matrix1[0])
-    matrix = []
-    for row in range(rows):
-        matrix.append([0] * cols)
-
-    for row in range(rows):
-        for col in range(cols):
-            matrix[row][col] = matrix1[row][col] * matrix2[row][col]
-
-    return np.array(matrix)
-
-
-def get_OR_matrix(matrix1, matrix2):
-    rows = len(matrix1)
-    cols = len(matrix1[0])
-    matrix = []
-    for row in range(rows):
-        matrix.append([0] * cols)
-
-    for row in range(rows):
-        for col in range(cols):
-            matrix[row][col] = max(matrix1[row][col], matrix2[row][col])
-
-    return matrix
-
-
-def get_clusters(matrix, est1, est2):
-    clusters = {}
-
-    rows = len(matrix)
-    cols = len(matrix[0])
-    exclude=[]
-    for row in range(rows):
-        if row+1 in exclude:
+def is_inferior(rank_list, first, second):
+    for item in rank_list:
+        if isinstance(item, int):
+            if first == item:
+                return True
+            if second == item:
+                return False
             continue
-        clusters[row + 1] = [row + 1]
-        for col in range(row+1, cols):
-            if matrix[row][col] == 0:
-                clusters[row + 1].append(col + 1)
-                exclude.append(col+1)
+        if first in item:
+            return second not in item
+        if second in item:
+            return first in item
+    return False
 
-    result = []
-    for k in clusters:
-        if not result:
-            result.append(clusters[k])
-            continue
-        # если сумма единичек меньше значит справа стоит меньше значит объект левее
-        for i, elem in enumerate(result):
-            # если объекты неразличимы в обоих оценках, то добавляяем в кластер вершины
-            if np.sum(est1[elem[0] - 1]) == np.sum(est1[k - 1]) and np.sum(est2[elem[0] - 1]) == np.sum(est2[k - 1]):
-                for c in clusters[k]:
-                    result[i].append(c)
-                    break
+def assemble_ranking(disputed_pairs, ranks_a, ranks_b):
+    expanded_a = expand_list(ranks_a)
+    expanded_b = expand_list(ranks_b)
+    final_ranking = []
 
-            if np.sum(est1[elem[0] - 1]) < np.sum(est1[k - 1]) or np.sum(est2[elem[0] - 1]) < np.sum(est2[k - 1]):
-                result = result[:i] + clusters[k] + result[i:]
-                break
-        result.append(clusters[k])
+    added_items = set()
 
-    final = []
-    for r in result:
-        if len(r) == 1:
-            final.append(r[0])
-        else:
-            final.append(r)
-    return str(final)
+    for item in expanded_a + expanded_b:
+        if item not in added_items:
+            controversy_group = [item]
+            for pair in disputed_pairs:
+                if item in pair:
+                    other_item = pair[0] if pair[1] == item else pair[1]
+                    controversy_group.append(other_item)
+            
+            if len(controversy_group) > 1:
+                final_ranking.append(controversy_group)
+            else:
+                final_ranking.append(item)
+            
+            added_items.update(controversy_group)
 
+    return final_ranking
 
-def task(string1, string2):
-    mx1 = get_matrix_from_expert(string1)
-    mx2 = get_matrix_from_expert(string2)
+def task(input_a, input_b):
+    rank_a = construct_matrix(input_a)
+    rank_b = construct_matrix(input_b)
 
-    mxAND = get_AND_matrix(mx1, mx2)
-    mxAND_T = get_AND_matrix(np.transpose(mx1), np.transpose(mx2))
+    combined_matrix = np.multiply(rank_a, rank_b)
+    transposed_matrix = np.multiply(np.transpose(rank_a), np.transpose(rank_b))
+    dispute_matrix = np.zeros(rank_a.shape, dtype=int)
+    for i in range(len(combined_matrix)):
+        for j in range(len(combined_matrix[i])):
+            dispute_matrix[i, j] = combined_matrix[i, j] or transposed_matrix[i, j]
 
-    mxOR = get_OR_matrix(mxAND, mxAND_T)
-    clusters = get_clusters(mxOR, mx1, mx2)
-    return clusters
+    disputed_pairs = []
+    for i in range(len(dispute_matrix)):
+        for j in range(len(dispute_matrix[i])):
+            if i < j:
+                continue
+            if dispute_matrix[i, j] == 0:
+                disputed_pairs.append((j + 1, i + 1))
 
+    return assemble_ranking(disputed_pairs, input_a, input_b)
 
-if __name__ == "__main__":
-    string1 = '[1,[2,3],4,[5,6,7],8,9,10]'
-    string2 = '[[1,3],[2,4,5],6,7,9,[8,10]]'
-    results = task(string1, string2)
-    print(results)
-    
+input_a = [1, [2, 3], 4, [5, 6, 7], 8, 9, 10]
+input_b = [[1, 3], [2, 4, 5], 6, 7, 9, [8, 10]]
+print(task(input_a, input_b))
