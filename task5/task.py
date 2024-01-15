@@ -130,6 +130,7 @@ def task(string1, string2):
 
 if __name__ == "__main__":
     string1 = '[1,[2,3],4,[5,6,7],8,9,10]'
-    string2 = '[[1,2],[3,4,5],6,7,9,[8,10]]'
+    string2 = '[[1,3],[2,4,5],6,7,9,[8,10]]'
     results = task(string1, string2)
     print(results)
+    
